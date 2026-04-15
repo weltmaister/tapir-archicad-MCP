@@ -5,6 +5,10 @@ def register_all_tools():
     registers the tools with the central 'mcp' instance from app.py.
     """
     from tapir_archicad_mcp.tools.custom import functions
+    from tapir_archicad_mcp.tools.custom import tapir_backend_extensions
+    from tapir_archicad_mcp.tools.custom import official_parity
+    from tapir_archicad_mcp.tools.custom import tapir_extensions
+    from tapir_archicad_mcp.tools.custom import tapir_parity
     from tapir_archicad_mcp.tools.generated import tapir
     from tapir_archicad_mcp.tools.generated import official
     pass
