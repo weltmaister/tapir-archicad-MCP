@@ -32,6 +32,7 @@ dependencies = [
     "fastmcp>=2.10.5",
     "multiconn-archicad==0.5.1",
     "sentence-transformers>=5.1.0",
+    "pywin32>=308; platform_system == 'Windows'",
 ]
 
 [project.urls]
@@ -40,3 +41,4 @@ Homepage = "https://github.com/SzamosiMate/tapir-archicad-MCP"
 
 [project.scripts]
 archicad-server = "tapir_archicad_mcp.server:main"
+archicad-tray = "tapir_archicad_mcp.tray_app:main"
