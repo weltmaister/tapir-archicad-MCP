@@ -63,6 +63,16 @@ def _build_tool_input_schema(func: Callable, params_model: ModelOrUnion) -> dict
             "description": "Token for the next page of results (for paginated responses)."
         }
 
+    input_schema['properties']['idempotency_key'] = {
+        "type": "string",
+        "description": (
+            "Optional unique key that makes this call safe to retry. Repeating a call "
+            "with the same key and arguments replays the first response instead of "
+            "executing again (e.g. preventing duplicate elements). Reusing a key with "
+            "different arguments fails."
+        )
+    }
+
     return input_schema
 
 
