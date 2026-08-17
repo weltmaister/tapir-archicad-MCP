@@ -1,9 +1,12 @@
 import logging
+import time
 from typing import Optional, Any, Dict
 from pydantic import BaseModel, ValidationError
 
 from tapir_archicad_mcp.app import mcp
+from tapir_archicad_mcp.audit import write_audit_entry
 from tapir_archicad_mcp.context import multi_conn_instance
+from tapir_archicad_mcp.idempotency import IdempotencyStore
 from tapir_archicad_mcp.tools.custom.models import (
     ArchicadInstanceInfo, UnavailableArchicadInstance, DiscoveryResult,
     ProjectType, CommandSchema, CommandOverview,
@@ -16,6 +19,16 @@ from multiconn_archicad.conn_header import is_header_fully_initialized, ConnHead
 from multiconn_archicad.basic_types import TeamworkProjectID, SoloProjectID, APIResponseError, ProductInfo
 
 log = logging.getLogger()
+
+_idempotency_store: Optional[IdempotencyStore] = None
+
+
+def _get_idempotency_store() -> IdempotencyStore:
+    """Lazily opens the store so importing this module has no side effects."""
+    global _idempotency_store
+    if _idempotency_store is None:
+        _idempotency_store = IdempotencyStore()
+    return _idempotency_store
 
 
 def _diagnose_connection_issue(header: ConnHeader, port: int) -> UnavailableArchicadInstance:
@@ -197,11 +210,56 @@ def archicad_get_command_schema(command_name: str) -> CommandSchema:
         "JSON structure required for the 'arguments' parameter. "
         "The 'arguments' dictionary MUST contain a 'port' number (from 'discovery_list_active_archicads'). "
         "If a tool's response includes a 'next_page_token', call this same tool again with the same parameters "
-        "and add a 'page_token' key to the 'arguments' dictionary."
+        "and add a 'page_token' key to the 'arguments' dictionary. "
+        "For commands that create or modify elements, add a unique 'idempotency_key' string to 'arguments' to make the call safe to retry: "
+        "repeating the call with the same key and arguments returns the first response instead of executing again."
     ))
 def archicad_call_tool(name: str, arguments: dict) -> dict:
     log.info(f"Executing archicad_call_tool for tool: {name}")
+    started = time.perf_counter()
+    idempotency_key = arguments.pop('idempotency_key', None)
+    replayed = False
 
+    try:
+        response = _fetch_replayed_response(name, arguments, idempotency_key)
+        replayed = response is not None
+        if response is None:
+            response = _execute_tool_call(name, arguments)
+            if idempotency_key:
+                _get_idempotency_store().store(name, idempotency_key, {"name": name, **arguments}, response)
+    except Exception as e:
+        write_audit_entry(
+            tool=name,
+            port=arguments.get('port'),
+            success=False,
+            durationMs=int((time.perf_counter() - started) * 1000),
+            idempotencyKey=idempotency_key,
+            error=str(e),
+        )
+        raise
+
+    write_audit_entry(
+        tool=name,
+        port=arguments.get('port'),
+        success=True,
+        durationMs=int((time.perf_counter() - started) * 1000),
+        idempotencyKey=idempotency_key,
+        replayed=replayed,
+    )
+    return response
+
+
+def _fetch_replayed_response(name: str, arguments: dict, idempotency_key: Optional[str]) -> Optional[dict]:
+    """Returns the replayed response for a known idempotency_key, else None."""
+    if not idempotency_key:
+        return None
+    cached = _get_idempotency_store().fetch(name, idempotency_key, {"name": name, **arguments})
+    if cached is not None:
+        log.info(f"Replaying stored response for '{name}' (idempotency_key={idempotency_key}).")
+    return cached
+
+
+def _execute_tool_call(name: str, arguments: dict) -> dict:
     if 'port' not in arguments:
         raise ValueError("The 'arguments' dictionary must contain the 'port' number.")
 
